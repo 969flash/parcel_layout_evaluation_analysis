@@ -1,0 +1,11 @@
+# Tolerances
+TOL = 0.0001  # 기본 허용 오차
+DIST_TOL = 0.01
+AREA_TOL = 0.1
+RAW_TOL = 0.5
+OP_TOL = 0.00001
+CLIPPER_TOL = 0.0000000001
+
+# Constants
+BIGNUM = 10000000
+ROUNDING_PRECISION = 6  # 반올림 소수점 자리수
