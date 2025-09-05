@@ -4,13 +4,14 @@ from typing import Dict, List, Any
 import importlib
 from block_generator import BlockGenerator
 from shape_manager import ShapefileManager
-import utils, units, shape_manager, block_generator
+import utils, units, shape_manager, block_generator, parcel_evaluator
 
 # 모듈 새로고침
 importlib.reload(utils)
 importlib.reload(units)
 importlib.reload(shape_manager)
 importlib.reload(block_generator)
+importlib.reload(parcel_evaluator)
 
 REL_FILE_PATH = "DATA/AL_D194_11680_20250123.shp"
 
@@ -41,3 +42,7 @@ if __name__ == "__main__":
     block_regions = [block.region for block in blocks if block.region]
 
     print(f"Generated {len(block_regions)} block regions.")
+
+    parcel_evaluator = parcel_evaluator.ParcelEvaluator()
+    layout_scores = parcel_evaluator.evaluate(blocks)
+    print("Layout evaluation complete.")

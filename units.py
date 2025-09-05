@@ -131,11 +131,8 @@ class Block:
         lot_regions = [lot.region for lot in self.lots if lot.region]
         offset_regions = utils.offset_regions_outward(lot_regions, RAW_TOL)
         block_regions = utils.get_union_regions(offset_regions)
-        sc.sticky["t2"] = lot_regions, offset_regions, block_regions
-
         if len(block_regions) != 1:
             block_region = self._get_out_region(block_regions)
-            print("@@@@@@@@@@@@@@@@@@DONUT")
             self.is_donut = True
 
         else:
@@ -144,8 +141,6 @@ class Block:
         block_region = utils.offset_regions_inward(block_region, RAW_TOL)
 
         if len(block_region) != 1:
-            print(len(block_region))
-            sc.sticky["t3"] = block_region
             raise ValueError("오프셋 이후 블록 경계가 단일 커브가 아닙니다.")
         self.region = block_region[0]
 
@@ -169,7 +164,6 @@ class Block:
                 break
 
         if out_region is None:
-            sc.sticky["t1"] = regions
             raise ValueError("모든 영역을 포함하는 단일 외곽 영역을 찾을 수 없습니다.")
 
         return out_region

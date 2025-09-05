@@ -6,6 +6,7 @@ from block_generator import BlockGenerator
 from shape_manager import ShapefileManager
 import utils, units, shape_manager, block_generator
 from units import Block
+import scriptcontext as sc
 
 # 모듈 새로고침
 importlib.reload(utils)
@@ -35,13 +36,42 @@ class ParcelEvaluator:
     def evaluate(self, blocks: List[Block]) -> Dict[str, Any]:
         print(f"Loaded {len(blocks)} blocks.")
 
-        block_regions = [block.region for block in self.blocks if block.region]
-        print(f"Generated {len(block_regions)} block regions.")
+        layout_scores = []
+        for block in blocks:
+            region_score = self._get_regions_score(block)
+            shape_score = self._get_shape_score(block)
+            road_score = self._get_road_score(block)
+            topo_score = self._get_topo_score(block)
+            layout_scores.append(
+                LayoutScore(region_score, shape_score, road_score, topo_score)
+            )
 
-        return {
-            "num_parcels": len(self.parcels),
-            "num_blocks": len(self.blocks),
-            "num_block_regions": len(block_regions),
-            "blocks": self.blocks,
-            "block_regions": block_regions,
-        }
+        return layout_scores
+
+    def _get_regions_score(self, block: Block) -> float:
+
+        result = utils.offset_regions_inward(block.region, 0.5)
+        if len(result) != 1:
+            raise ValueError("오프셋 이후 블록 경계가 단일 커브가 아닙니다.")
+        block_region = result[0]
+
+        lots_regions = []
+        for lot in block.lots:
+            lot_regions = utils.offset_regions_inward(lot.region, 0.5)
+            lots_regions.extend(lot_regions)
+
+        return sum(utils.get_area(region) for region in lots_regions) / utils.get_area(
+            block_region
+        )
+
+    def _get_shape_score(self, block: Block) -> float:
+        # Placeholder for shape score calculation
+        return 0.0
+
+    def _get_road_score(self, block: Block) -> float:
+        # Placeholder for road score calculation
+        return 0.0
+
+    def _get_topo_score(self, block: Block) -> float:
+        # Placeholder for topology score calculation
+        return 0.0

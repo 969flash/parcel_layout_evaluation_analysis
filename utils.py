@@ -109,6 +109,14 @@ def get_pts_by_length(
     return [crv.PointAt(param) for param in params]
 
 
+def get_area(region: geo.Curve) -> float:
+    """영역 커브의 면적을 계산합니다."""
+    if not region or not region.IsClosed:
+        return 0.0
+    area = geo.AreaMassProperties.Compute(region)
+    return round(area.Area, ROUNDING_PRECISION)
+
+
 # ==============================================================================
 # 2. 고급 지오메트리 연산 (Advanced Geometry Operations)
 # ==============================================================================
@@ -257,6 +265,9 @@ def offset_regions_inward(
     if not dist:
         return regions
     result = Offset().polyline_offset(regions, dist, miter).holes
+
+    if not result:
+        return []
 
     if isinstance(regions, geo.Curve):
         regions = [regions]
