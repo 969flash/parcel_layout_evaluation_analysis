@@ -75,3 +75,4 @@ class ParcelEvaluator:
     def _get_topo_score(self, block: Block) -> float:
         # Placeholder for topology score calculation
         return 0.0
+
