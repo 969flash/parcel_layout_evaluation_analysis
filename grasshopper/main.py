@@ -13,22 +13,11 @@ importlib.reload(shape_manager)
 importlib.reload(block_generator)
 importlib.reload(parcel_evaluator)
 
-REL_FILE_PATH = "DATA/AL_D194_11680_20250123.shp"
-
 
 if __name__ == "__main__":
     # 실행 위치 확인 (1번)
-    from pathlib import Path as _P
 
-    print("[CWD]", _P.cwd())
-    print("[MAIN __file__]", __file__)
-    abs_shp = (_P(__file__).parent / REL_FILE_PATH).resolve()
-    print("[Resolved SHP]", abs_shp)
-    if not abs_shp.exists():
-        raise FileNotFoundError(f"Shapefile not found: {abs_shp}")
-    else:
-        print(f"SHP file found: {abs_shp}")
-
+    abs_shp = globals().get("shapefile_path", None)
     shapefile_manager = ShapefileManager(str(abs_shp))
     parcels = shapefile_manager.get_parcels_from_shapes()
 
