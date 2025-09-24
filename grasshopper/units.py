@@ -118,7 +118,8 @@ class Lot(Parcel):
 
 
 class Block:
-    def __init__(self, lots: List[Lot]):
+    def __init__(self, lots: List[Lot], id: int):
+        self.id = id
         self.lots = lots
         self.region: geo.Curve = None  # 블록 경계
         # 막힌 도로를 포함한 블록 여부

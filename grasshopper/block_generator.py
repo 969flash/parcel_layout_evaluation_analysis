@@ -104,11 +104,6 @@ class BlockGenerator:
                 geometries.append(polygon)
                 pnu_list.append(lot.pnu)
 
-        if not pnu_list:
-            print(" NO PNU ")
-            # 유효한 지오메트리가 하나도 없는 경우
-            return [units.Block(lots=[lot]) for lot in lots]
-
         # GeoDataFrame 생성 (공간 인덱스가 자동으로 만들어짐)
         gdf = gpd.GeoDataFrame({"pnu": pnu_list, "geometry": geometries})
         print(len(gdf), "valid geometries created for lots.")
@@ -138,8 +133,8 @@ class BlockGenerator:
 
         # 5. 찾은 클러스터(PNU 묶음)를 기반으로 units.Block 객체 생성
         blocks = []
-        for pnu_group in clusters:
+        for i, pnu_group in enumerate(clusters):
             cluster_lots = [lot_map[pnu] for pnu in pnu_group]
-            blocks.append(units.Block(lots=cluster_lots))
+            blocks.append(units.Block(lots=cluster_lots, id=i))
 
         return blocks
