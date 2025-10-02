@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 # -*- coding: utf-8 -*-
 # r: pyshp
 import importlib
-from typing import List, Tuple, Any, Optional, Union
+from typing import List, Tuple, Any, Optional, TYPE_CHECKING
 import shapefile
 import importlib
 
@@ -12,66 +14,32 @@ import ghpythonlib.components as ghcomp
 
 # Local class imports
 # 클래스는 units.py에 정의되어 있다고 가정합니다.
-from units import Parcel, Road, Lot
+from units import Parcel, Road, Lot, Block
 from constants import TOL
 import utils, units
+from pathlib import Path
+from datetime import datetime
 
 importlib.reload(utils)
 importlib.reload(units)
 
+if TYPE_CHECKING:
+    from units import Block
+
 
 class ShapefileManager:
     """
-    Shapefile 로딩, Parcel 생성 및 분석 과정을 캡슐화한 관리자 클래스.
-    파일 경로만으로 관련 작업을 쉽게 수행할 수 있도록 API를 제공합니다.
+    - 기능 1: SHP 파일로부터 Parcel 객체 생성
+    - 기능 2: Block 객체 리스트를 받아 SHP 파일로 저장
+
+    생성자에서는 파일 경로를 받지 않습니다. 각 기능 메서드에서 경로를 인자로 받습니다.
     """
 
-    def __init__(self, file_path: str):
-        # 상세 디버그: 인코딩 순차 시도 + 내부 상태 점검
-        enc_attempts = ["utf-8", "cp949", None]
-        last_errors = []
-        sf = None
-        for enc in enc_attempts:
-            try:
-                if enc:
-                    sf = shapefile.Reader(file_path, encoding=enc)
-                else:
-                    sf = shapefile.Reader(file_path)
-                print(f"[ShapefileManager] opened OK with encoding={enc}")
-                break
-            except Exception as e:
-                last_errors.append((enc, repr(e)))
-        if sf is None:
-            detail = "\n".join([f"  - {enc}: {err}" for enc, err in last_errors])
-            raise RuntimeError(f"Failed to open shapefile: {file_path}\n{detail}")
-
-        # 원시 내부 속성(필요시) 확인
-        try:
-            print("[DEBUG] file_path:", file_path)
-            print(
-                "[DEBUG] numShapes:",
-                sf.numShapes() if hasattr(sf, "numShapes") else "n/a",
-            )
-            print("[DEBUG] fields raw:", sf.fields if hasattr(sf, "fields") else "n/a")
-        except Exception as e:
-            print("[DEBUG] meta access error:", e)
-
-        try:
-            self._shapes = sf.shapes()
-        except Exception as e:
-            raise RuntimeError(f"Failed to read shapes(): {e}")
-        try:
-            self._records = sf.records()
-        except Exception as e:
-            raise RuntimeError(f"Failed to read records(): {e}")
-        try:
-            raw_fields = sf.fields[1:]  # 첫 필드는 DeletionFlag
-            self._fields = [f[0] for f in raw_fields]
-        except Exception as e:
-            raise RuntimeError(f"Failed to parse fields: {e}")
-
-        if not self._fields:
-            print("[WARN] No fields parsed; DBF may be missing or corrupt")
+    def __init__(self) -> None:
+        self._encoding: Optional[str] = (
+            None  # 마지막 읽기에 사용한 DBF 인코딩 (또는 .cpg에서 추출)
+        )
+        self._prj_wkt: Optional[str] = None  # 마지막 읽기 소스의 .prj WKT 텍스트
 
     def _get_field_value(
         self,
@@ -163,11 +131,171 @@ class ShapefileManager:
         # 지오메트리 전처리 후 유효한 경우에만 반환
         return parcel  # if parcel.preprocess_curve() else None
 
-    def get_parcels_from_shapes(self) -> List[Parcel]:
-        """모든 Shape로부터 Parcel 객체 리스트를 생성합니다."""
-        parcels = []
-        for shape, record in zip(self._shapes, self._records):
-            parcel = self._create_parcel_from_shape(shape, record, self._fields)
+    def get_parcels_from_shapes(self, file_path: str) -> List[Parcel]:
+        """
+        모든 Shape로부터 Parcel 객체 리스트를 생성합니다.
+        파일 경로는 이 메서드 호출 시 인자로 전달합니다.
+        """
+        # 상세 디버그: 인코딩 순차 시도 + 내부 상태 점검
+        enc_attempts = ["utf-8", "cp949", None]
+        last_errors = []
+        sf = None
+        for enc in enc_attempts:
+            try:
+                if enc:
+                    sf = shapefile.Reader(file_path, encoding=enc)
+                else:
+                    sf = shapefile.Reader(file_path)
+                print(f"[ShapefileManager] opened OK with encoding={enc}")
+                # 인코딩 기록: 명시적 인코딩을 사용했다면 저장
+                if enc:
+                    self._encoding = enc
+                break
+            except Exception as e:
+                last_errors.append((enc, repr(e)))
+        if sf is None:
+            detail = "\n".join([f"  - {enc}: {err}" for enc, err in last_errors])
+            raise RuntimeError(f"Failed to open shapefile: {file_path}\n{detail}")
+
+        # 원시 내부 속성(필요시) 확인
+        try:
+            print("[DEBUG] file_path:", file_path)
+            print(
+                "[DEBUG] numShapes:",
+                sf.numShapes() if hasattr(sf, "numShapes") else "n/a",
+            )
+            print("[DEBUG] fields raw:", sf.fields if hasattr(sf, "fields") else "n/a")
+        except Exception as e:
+            print("[DEBUG] meta access error:", e)
+
+        try:
+            shapes = sf.shapes()
+        except Exception as e:
+            raise RuntimeError(f"Failed to read shapes(): {e}")
+        try:
+            records = sf.records()
+        except Exception as e:
+            raise RuntimeError(f"Failed to read records(): {e}")
+        try:
+            raw_fields = sf.fields[1:]  # 첫 필드는 DeletionFlag
+            fields = [f[0] for f in raw_fields]
+        except Exception as e:
+            raise RuntimeError(f"Failed to parse fields: {e}")
+
+        if not fields:
+            print("[WARN] No fields parsed; DBF may be missing or corrupt")
+
+        # 좌표계/인코딩 부가 정보 보존: .prj/.cpg
+        try:
+            prj_path = Path(file_path).with_suffix(".prj")
+            if prj_path.exists():
+                # WKT는 일반 텍스트. 인코딩은 보통 ASCII/UTF-8로 문제 없음
+                self._prj_wkt = prj_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            pass
+        try:
+            # .cpg 파일이 있다면 인코딩으로 활용 (명시적 인코딩 미사용 시)
+            if not self._encoding:
+                cpg_path = Path(file_path).with_suffix(".cpg")
+                if cpg_path.exists():
+                    enc = cpg_path.read_text(encoding="utf-8", errors="ignore").strip()
+                    if enc:
+                        self._encoding = enc
+        except Exception:
+            pass
+
+        parcels: List[Parcel] = []
+        for shape, record in zip(shapes, records):
+            parcel = self._create_parcel_from_shape(shape, record, fields)
             if parcel:
                 parcels.append(parcel)
         return parcels
+
+    # ==============================================================
+    # 저장 기능: Block 리스트를 SHP로 저장
+    # ==============================================================
+    def save_blocks_to_shapefile(self, blocks: List[Block], dir_path: str) -> str:
+        """
+        Block.region(폴리곤)을 geometry로 저장하고, Block.layout_score의 4개 점수를 속성으로 기록합니다.
+
+        - 필드: BLOCK_ID, REGION, SHAPE, ROAD, TOPO
+        - geometry: Polygon (단일 외곽 링; 현재 Block.region만 저장)
+        """
+        if not blocks:
+            # 빈 입력이면 저장하지 않고 빈 경로 반환
+            return ""
+
+        # 출력 디렉토리 준비
+        out_dir = Path(dir_path)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # 날짜 기반 파일명 + 증분: YYYYMMDD_{n}_blocks.shp
+        date_str = datetime.now().strftime("%Y%m%d")
+        n = 1
+        while True:
+            base_name = f"{date_str}_{n}_blocks"
+            shp_path = out_dir / f"{base_name}.shp"
+            if not shp_path.exists():
+                break
+            n += 1
+
+        # shapefile Writer 설정
+        # 읽기에서 기억한 인코딩을 사용 (기본: utf-8)
+        writer_encoding = self._encoding or "utf-8"
+        w = shapefile.Writer(
+            str(shp_path), shapeType=shapefile.POLYGON, encoding=writer_encoding
+        )
+        w.autoBalance = 1
+
+        # 필드 정의 (DBF 제약: 이름 <= 10자)
+        w.field("BLOCK_ID", "N")
+        w.field("REGION", "F", 10, 5)
+        w.field("SHAPE", "F", 10, 5)
+        w.field("ROAD", "F", 10, 5)
+        w.field("TOPO", "F", 10, 5)
+
+        for block in blocks:
+            # 점 리스트 생성 (폴리라인 근사)
+            pts = utils.get_vertices(block.region)
+            pts = [(pt.X, pt.Y) for pt in pts] + [(pts[0].X, pts[0].Y)]  # 닫기
+
+            if len(pts) < 4:
+                # 최소 3점 + 폐합 필요
+                continue
+
+            # 속성값: layout_score 존재 시 사용, 없으면 0.0 기본값
+            region_s = block.layout_score.region_score
+            shape_s = block.layout_score.shape_score
+            road_s = block.layout_score.road_score
+            topo_s = block.layout_score.topo_score
+
+            # geometry + record 추가
+            w.poly([pts])  # 단일 외곽 링
+            w.record(
+                int(getattr(block, "id", -1)),
+                float(region_s),
+                float(shape_s),
+                float(road_s),
+                float(topo_s),
+            )
+
+        # 파일 저장
+        w.close()
+
+        # .prj/.cpg 파일 동반 저장 (읽은 설정 재사용)
+        try:
+            if self._prj_wkt:
+                (shp_path.with_suffix(".prj")).write_text(
+                    self._prj_wkt, encoding="utf-8"
+                )
+        except Exception:
+            pass
+        try:
+            if writer_encoding:
+                (shp_path.with_suffix(".cpg")).write_text(
+                    writer_encoding, encoding="utf-8"
+                )
+        except Exception:
+            pass
+
+        return str(shp_path)

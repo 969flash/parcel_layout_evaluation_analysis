@@ -126,6 +126,8 @@ class Block:
         self.is_donut = False
         self._set_block_region()
 
+        self.layout_score: LayoutScore = None  # 평가 점수 저장용
+
     def _set_block_region(self) -> None:
         """주어진 Lot들의 경계를 생성합니다."""
         # 모든 Lot의 경계를 합쳐서 하나의 경계로 만듭니다.
@@ -168,3 +170,21 @@ class Block:
             raise ValueError("모든 영역을 포함하는 단일 외곽 영역을 찾을 수 없습니다.")
 
         return out_region
+
+
+class LayoutScore:
+    def __init__(
+        self,
+        region_score: float = 0.0,
+        shape_score: float = 0.0,
+        road_score: float = 0.0,
+        topo_score: float = 0.0,
+    ):
+        self.region_score = region_score
+        self.shape_score = shape_score
+        self.road_score = road_score
+        self.topo_score = topo_score
+
+    def __repr__(self):
+        # 출력용 문자열 반환
+        return f"LayoutScore(region_score={self.region_score}, shape_score={self.shape_score}, road_score={self.road_score}, topo_score={self.topo_score})"

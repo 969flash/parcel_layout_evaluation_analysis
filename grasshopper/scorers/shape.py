@@ -27,7 +27,7 @@ def compute(block: Block) -> float:
     sq_shape_index = lots_sq_shape_index / block_sq_shape_index
     convexity_index = lots_convexity_index / block_convexity_index
 
-    return sq_shape_index
+    return lots_sq_shape_index / len(block.lots)
 
 
 def get_sq_shape_index(region: geo.Curve) -> float:
