@@ -1,10 +1,13 @@
 from typing import Dict, List, Any
 from units import Block, LayoutScore
 import scorers  # type: ignore
+import importlib
+
+importlib.reload(scorers)
 
 
 def evaluate(blocks: List[Block]) -> List[Block]:
-    print(f"Loaded {len(blocks)} blocks.")
+    print(f"[EVALUSATION] Loaded {len(blocks)} blocks.")
 
     for block in blocks:
         block.layout_score = LayoutScore(

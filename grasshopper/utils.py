@@ -109,12 +109,13 @@ def get_pts_by_length(
     return [crv.PointAt(param) for param in params]
 
 
-def get_area(region: geo.Curve) -> float:
+def get_area(regions: Union[List[geo.Curve], geo.Curve]) -> float:
     """영역 커브의 면적을 계산합니다."""
-    if not region or not region.IsClosed:
-        return 0.0
-    area = geo.AreaMassProperties.Compute(region)
-    return round(area.Area, ROUNDING_PRECISION)
+    if not isinstance(regions, list):
+        regions = [regions]
+
+    area = sum([geo.AreaMassProperties.Compute(r).Area for r in regions])
+    return round(area, ROUNDING_PRECISION)
 
 
 # ==============================================================================
@@ -298,6 +299,32 @@ def offset_regions_outward(
     return [offset_region_outward(region, dist, miter) for region in regions]
 
 
+def simplify_region_with_offset(
+    region: geo.Curve, dist: float, single_result: bool = False, miter: int = BIGNUM
+) -> Union[List[geo.Curve], geo.Curve]:
+    """영역 커브를 안팎으로 offset 하여 단순화한다.
+    이로인해 dist 미만의 폭을 가진 영역이 사라진다.
+    Args:
+        region: 단순화할 대상 커브
+        dist: 안팎으로 offset할 거리
+
+    Returns:
+        단순화된 커브 리스트
+    """
+    if dist <= 0.0:
+        if single_result:
+            return region
+        return [region]
+
+    inner = offset_regions_inward(region, -dist * 0.5, miter)
+    outer = offset_regions_outward(inner, dist * 0.5, miter)
+
+    if single_result:
+        outer = max(outer, key=lambda r: get_area(r))
+
+    return outer
+
+
 def offset_region_outward(
     region: geo.Curve, dist: float, miter: float = BIGNUM
 ) -> geo.Curve:
@@ -348,9 +375,35 @@ class RegionBool:
 
         return result
 
+    def polyline_boolean_intersection(self, crvs0, crvs1, plane=None, tol=CLIPPER_TOL):
+        # type: (Union[geo.Curve, List[geo.Curve]], Union[geo.Curve, List[geo.Curve]], geo.Plane, float) -> List[geo.Curve]
+        return self._polyline_boolean(crvs0, crvs1, 0, plane, tol)
+
     def polyline_boolean_union(self, crvs0, crvs1, plane=None, tol=CLIPPER_TOL):
         # type: (Union[geo.Curve, List[geo.Curve]], Union[geo.Curve, List[geo.Curve]], geo.Plane, float) -> List[geo.Curve]
         return self._polyline_boolean(crvs0, crvs1, 1, plane, tol)
+
+    def polyline_boolean_difference(self, crvs0, crvs1, plane=None, tol=CLIPPER_TOL):
+        # type: (Union[geo.Curve, List[geo.Curve]], Union[geo.Curve, List[geo.Curve]], geo.Plane, float) -> List[geo.Curve]
+        return self._polyline_boolean(crvs0, crvs1, 2, plane, tol)
+
+
+def get_intersection_regions(
+    regions_a: List[geo.Curve], regions_b: List[geo.Curve]
+) -> List[geo.Curve]:
+    """두 영역 커브 리스트의 교집합을 구합니다.
+    Args:
+        regions_a: 첫 번째 영역 커브 리스트
+        regions_b: 두 번째 영역 커브 리스트
+    Returns:
+        교집합 결과 커브들
+    """
+    if not regions_a or not regions_b:
+        return []
+    intersection_result = RegionBool().polyline_boolean_intersection(
+        regions_a, regions_b
+    )
+    return intersection_result
 
 
 def get_union_regions(regions: List[geo.Curve] = None) -> List[geo.Curve]:
