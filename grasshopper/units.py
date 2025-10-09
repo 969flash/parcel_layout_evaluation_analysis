@@ -147,7 +147,14 @@ class Block:
 
         if len(block_region) != 1:
             raise ValueError("오프셋 이후 블록 경계가 단일 커브가 아닙니다.")
-        self.region = block_region[0]
+
+        try:
+            block_region = utils.simplify_crv_by_reducing_segments(block_region[0], TOL)
+        except Exception:
+            print("블록 경계 단순화 실패")
+            block_region = block_region[0]
+
+        self.region = block_region
 
     def _get_out_region(self, regions: List[geo.Curve]) -> geo.Curve:
         """가장 바깥쪽의 영역 커브를 반환합니다."""
