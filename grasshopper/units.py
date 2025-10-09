@@ -111,10 +111,12 @@ class Lot(Parcel):
         jimok: str,
         record: List[Any],
         hole_regions: Optional[List[geo.Curve]] = None,
+        road_adj: Optional[int] = None,
     ):
         super().__init__(curve_crv, pnu, jimok, record, hole_regions)
         self.is_flag_lot: bool = False  # 자루형 토지 여부
         self.has_road_access: bool = False  # 도로 접근 여부
+        self.road_adj = road_adj
 
 
 class Block:
