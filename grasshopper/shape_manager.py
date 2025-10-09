@@ -122,11 +122,12 @@ class ShapefileManager:
 
         pnu = self._get_field_value(record, fields, "A1")
         jimok = self._get_field_value(record, fields, "A11")
+        road_adj = self._get_field_value(record, fields, "A23")
 
         if jimok == "도로" or not jimok:
             parcel = Road(boundary_region, pnu, jimok, record, hole_regions)
         else:
-            parcel = Lot(boundary_region, pnu, jimok, record, hole_regions)
+            parcel = Lot(boundary_region, pnu, jimok, record, hole_regions, road_adj)
 
         # 지오메트리 전처리 후 유효한 경우에만 반환
         return parcel  # if parcel.preprocess_curve() else None

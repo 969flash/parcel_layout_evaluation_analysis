@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from typing import List, Tuple, Any, Optional, Union
+import math
 import functools
 import Rhino
 import Rhino.Geometry as geo
@@ -324,6 +325,89 @@ def simplify_regions_with_offset(
     outer = offset_regions_outward(inner, dist * 0.5, miter)
 
     return outer
+
+
+# ==============================================================================
+# 2.1 폴리라인 기반 세그먼트 감소형 Simplify (전처리 친화)
+# ==============================================================================
+
+
+def simplify_crv_by_reducing_segments(
+    crv: geo.Curve,
+    tol: float = TOL,
+    angle_tol: Optional[float] = None,
+) -> geo.Curve:
+    """MergeColinearSegments + ReduceSegments 기반 단순화.
+
+    - colinear(동일선상) 세그먼트 병합 후, 길이/변화가 tol 이내인 세그먼트 제거로 안정화.
+    - 닫힌 커브의 시작/끝 점 처리 보정 포함.
+    - 실패/과도 단순화 시 원본 반환.
+    """
+    if crv is None:
+        return crv
+
+    if angle_tol is None:
+        # 가능하면 constants.ANGLE_TOL 사용, 없으면 약 1도(라디안)
+        try:
+            from constants import ANGLE_TOL as _ANGLE_TOL  # type: ignore
+
+            angle_tol = float(_ANGLE_TOL)
+        except Exception:
+            angle_tol = math.radians(1.0)
+
+    # vertices 기반 polyline 작성
+    pts = get_vertices(crv)
+    if not pts:
+        return crv
+    if crv.IsClosed:
+        pts.append(pts[0])
+
+    pl = geo.Polyline(pts)
+
+    # colinear 병합 및 세그먼트 감소
+    try:
+        pl.MergeColinearSegments(angle_tol, True)
+    except Exception:
+        pass
+    try:
+        pl.ReduceSegments(tol)
+    except Exception:
+        pass
+
+    # 닫힌 커브의 시작점 보정(일부 케이스에서 ReduceSegments가 시작점에 동작하지 않음)
+    try:
+        if pl.IsClosed and pl.Count > 3:
+            pt_items = list(pl.Item)
+            pt_first = pt_items[0]
+            pt1 = pt_items[1]
+            pt2 = pt_items[pl.Count - 2]
+            if geo.Line(pt1, pt2).DistanceTo(pt_first, True) <= tol:
+                pl.RemoveAt(0)
+                pl.RemoveAt(pl.Count - 1)
+                pl.Add(pl.First)
+    except Exception:
+        pass
+
+    polycrv = pl.ToPolylineCurve()
+    if not getattr(polycrv, "IsValid", False):
+        # 너무 작은/불안정한 경우 원본 유지
+        return crv
+    return polycrv
+
+
+def simplify_crvs_by_reducing_segments(
+    crvs: List[geo.Curve], tol: float = TOL, angle_tol: Optional[float] = None
+) -> List[geo.Curve]:
+    """여러 커브에 대해 세그먼트 감소형 단순화를 일괄 적용"""
+    if not crvs:
+        return []
+    out: List[geo.Curve] = []
+    for r in crvs:
+        try:
+            out.append(simplify_crv_by_reducing_segments(r, tol, angle_tol))
+        except Exception:
+            out.append(r)
+    return out
 
 
 def offset_region_outward(
