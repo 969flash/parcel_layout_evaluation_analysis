@@ -299,8 +299,8 @@ def offset_regions_outward(
     return [offset_region_outward(region, dist, miter) for region in regions]
 
 
-def simplify_region_with_offset(
-    region: geo.Curve, dist: float, single_result: bool = False, miter: int = BIGNUM
+def simplify_regions_with_offset(
+    regions: List[geo.Curve], dist: float, miter: int = BIGNUM
 ) -> Union[List[geo.Curve], geo.Curve]:
     """영역 커브를 안팎으로 offset 하여 단순화한다.
     이로인해 dist 미만의 폭을 가진 영역이 사라진다.
@@ -311,16 +311,17 @@ def simplify_region_with_offset(
     Returns:
         단순화된 커브 리스트
     """
+    if not regions:
+        return []
+
     if dist <= 0.0:
-        if single_result:
-            return region
-        return [region]
+        return regions
 
-    inner = offset_regions_inward(region, -dist * 0.5, miter)
+    inner = offset_regions_inward(regions, dist * 0.5, miter)
+    if not inner:
+        return []
+
     outer = offset_regions_outward(inner, dist * 0.5, miter)
-
-    if single_result:
-        outer = max(outer, key=lambda r: get_area(r))
 
     return outer
 
