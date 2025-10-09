@@ -64,3 +64,6 @@ results/
 # Python notebooks
 .ipynb_checkpoints/
 *.ipynb
+
+# output_data folder
+output_data/

@@ -9,3 +9,15 @@ CLIPPER_TOL = 0.0000000001
 # Constants
 BIGNUM = 10000000
 ROUNDING_PRECISION = 6  # 반올림 소수점 자리수
+
+# Setbacks and Offsets (in meters)
+SMALL_SETBACK = 1.0
+LARGE_SETBACK = 2.0
+SMALL_ADJ_OFFSET = 0.5
+LARGE_ADJ_OFFSET = 1.5
+
+# Building Constraints (in meters)
+MIN_BUILDING_WIDTH = 4.0
+
+# Area Thresholds (in square meters)
+LARGE_LOT_AREA = 660.0
