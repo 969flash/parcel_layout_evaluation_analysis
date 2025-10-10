@@ -9,25 +9,38 @@ import utils
 
 def compute(block: Block) -> float:
     """
-    블록 형태 점수(placeholder).
+    블록의 RSI(Revised Shape Index) 점수 계산.
 
-    추후, 블록 PSI(정사각형 기준 형태지수)를 분모로 하고
-    lot PSI 평균을 분자로 하는 비율을 사용할 수 있습니다.
-    현재는 계산 로직 미정 상태로 0.0을 반환합니다.
+    RSI = (w1 × Score_convexity + w2 × Score_circularity)
+
+    - Score_convexity: 볼록성 점수 (0~1), 자루형/부정형 필지에 페널티
+    - Score_circularity: 원형성 점수 (0~1), 극단적으로 길쭉한 필지에 페널티
+    - w1, w2: 가중치 (각각 0.5)
+
+    블록 내 모든 필지의 RSI 점수 평균을 반환합니다.
     """
-    block_sq_shape_index = get_sq_shape_index(block.region)
-    block_convexity_index = get_convexity_index(block.region)
-    lots_sq_shape_index = sum(
-        [get_sq_shape_index(lot.region) for lot in block.lots]
-    ) / len(block.lots)
-    lots_convexity_index = sum(
-        [get_convexity_index(lot.region) for lot in block.lots]
-    ) / len(block.lots)
+    if not block.lots:
+        return 0.0
 
-    sq_shape_index = lots_sq_shape_index / block_sq_shape_index
-    convexity_index = lots_convexity_index / block_convexity_index
+    # 가중치 설정 (균형 있게 시작)
+    w1 = 0.5  # 볼록성 가중치
+    w2 = 0.5  # 원형성 가중치
 
-    return lots_sq_shape_index / len(block.lots)
+    # 각 필지의 RSI 점수 계산
+    lot_rsi_scores = []
+    for lot in block.lots:
+        # Component 1: 볼록성 점수
+        score_convexity = get_convexity_index(lot.region)
+
+        # Component 2: 원형성 점수
+        score_circularity = get_circularity_index(lot.region)
+
+        # RSI 계산
+        rsi = w1 * score_convexity + w2 * score_circularity
+        lot_rsi_scores.append(rsi)
+
+    # 블록 내 필지들의 평균 RSI 점수 반환
+    return sum(lot_rsi_scores) / len(lot_rsi_scores)
 
 
 def get_sq_shape_index(region: geo.Curve) -> float:
@@ -44,7 +57,7 @@ def get_sq_shape_index(region: geo.Curve) -> float:
     if area <= 0.0 or perim <= 0.0:
         return 0.0
 
-    return perim / (4.0 * math.sqrt(area))
+    return perim / (6.0 * math.sqrt(area))
 
 
 def get_convexity_index(region: geo.Curve) -> float:
@@ -54,6 +67,7 @@ def get_convexity_index(region: geo.Curve) -> float:
     - A: 원래 영역 면적
     - A_ch: 최소 볼록 다각형(Convex Hull) 면적
     - 결과값은 (0, 1] 범위. 1에 가까울수록 더 볼록함.
+    - 자루형, ㄷ자형, 별 모양 등 움푹 파인 필지에 페널티 부여
     """
     if not region or not getattr(region, "IsClosed", False):
         return 0.0
@@ -75,6 +89,36 @@ def get_convexity_index(region: geo.Curve) -> float:
     if hull_area <= 0.0:
         return 0.0
     return area / hull_area
+
+
+def get_circularity_index(region: geo.Curve) -> float:
+    """
+    원형성 지수(Isoperimetric Quotient) 계산: (4 × π × A) / P²
+
+    - A: 필지 면적
+    - P: 필지 둘레
+    - 완벽한 원: 1.0
+    - 정사각형: ~0.785
+    - 길고 얇은 직사각형: 0에 가까운 값
+    - 극단적으로 길쭉한 필지에 페널티 부여
+    """
+    if not region or not getattr(region, "IsClosed", False):
+        return 0.0
+
+    try:
+        area = float(utils.get_area(region))
+        perim = float(region.GetLength())
+    except Exception:
+        return 0.0
+
+    if area <= 0.0 or perim <= 0.0:
+        return 0.0
+
+    # Isoperimetric Quotient 공식
+    circularity = (4.0 * math.pi * area) / (perim * perim)
+
+    # 이론적으로 1.0을 초과할 수 없지만, 부동소수점 오차로 인해 약간 초과할 수 있음
+    return min(circularity, 1.0)
 
 
 def _convex_hull_curve(region: geo.Curve) -> geo.Curve | None:
