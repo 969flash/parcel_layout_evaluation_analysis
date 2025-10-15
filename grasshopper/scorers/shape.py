@@ -6,20 +6,12 @@ import Rhino.Geometry as geo
 from units import Block
 import utils
 import os
+from constants import SHAPE_COMPONENT_WEIGHTS, SHAPE_BLOCK_INFLUENCE
 
-
-LOT_WEIGHT = 0.5
-BLOCK_WEIGHT = 0.5
 
 MIN_HULL_SAMPLE_POINTS = 200
 MAX_HULL_SAMPLE_STEP = 1.0
 MIN_HULL_SAMPLE_STEP = 1e-3
-
-SHAPE_COMPONENT_WEIGHTS = {
-    "convexity": 0.3,
-    "circularity": 0.3,
-    "squareness": 0.4,
-}
 
 
 def _is_debug_enabled() -> bool:
@@ -33,72 +25,60 @@ def _log_debug(message: str) -> None:
 
 
 def compute(block: Block) -> float:
-    """
-    블록의 RSI(Revised Shape Index) 점수 계산.
+    """Return the shape score for a block.
 
-    RSI = (w1 × Score_convexity + w2 × Score_circularity)
-
-    - Score_convexity: 볼록성 점수 (0~1), 자루형/부정형 필지에 페널티
-    - Score_circularity: 원형성 점수 (0~1), 극단적으로 길쭉한 필지에 페널티
-    - w1, w2: 가중치 (각각 0.5)
-
-    블록 내 모든 필지의 RSI 점수 평균을 반환합니다.
+    1) 각 필지의 RSI 평균을 계산하고
+    2) 블록 외곽선의 RSI를 기반으로 'ugly multiplier'를 만들어
+    3) 두 값을 곱해 최종 점수를 산출합니다.
     """
     if not block.lots:
         return 0.0
 
-    # 각 필지의 RSI 점수 계산
-    lot_rsi_scores = []
-    for lot in block.lots:
-        region = getattr(lot, "region", None)
-        if not region:
-            continue
-        lot_components = _compute_shape_components(region)
-        rsi = _combine_components(lot_components)
-        lot_rsi_scores.append(rsi)
-        _log_debug(
-            "Lot RSI -> convexity={:.3f}, circularity={:.3f}, squareness={:.3f}, rsi={:.3f}".format(
-                lot_components["convexity"],
-                lot_components["circularity"],
-                lot_components["squareness"],
-                rsi,
-            )
-        )
-
-    lot_average = sum(lot_rsi_scores) / len(lot_rsi_scores) if lot_rsi_scores else None
-
-    block_rsi = None
-    block_region = getattr(block, "region", None)
-    if block_region:
-        block_components = _compute_shape_components(block_region)
-        block_rsi = _combine_components(block_components)
-        _log_debug(
-            "Block RSI -> convexity={:.3f}, circularity={:.3f}, squareness={:.3f}, rsi={:.3f}".format(
-                block_components["convexity"],
-                block_components["circularity"],
-                block_components["squareness"],
-                block_rsi,
-            )
-        )
-
-    weighted_components: List[Tuple[float, float]] = []
-    if lot_average is not None:
-        weighted_components.append((lot_average, LOT_WEIGHT))
-    if block_rsi is not None:
-        weighted_components.append((block_rsi, BLOCK_WEIGHT))
-
-    if not weighted_components:
+    lot_scores = [get_rsi(getattr(lot, "region", None)) for lot in block.lots]
+    lot_scores = [score for score in lot_scores if score is not None]
+    if not lot_scores:
         return 0.0
 
-    total_weight = sum(weight for _, weight in weighted_components)
-    final_score = (
-        sum(value * weight for value, weight in weighted_components) / total_weight
+    lot_avg_rsi = sum(lot_scores) / len(lot_scores)
+
+    block_rsi = get_rsi(getattr(block, "region", None))
+    block_multiplier = _compute_block_multiplier(block_rsi)
+
+    final_score = lot_avg_rsi * block_multiplier
+
+    _log_debug(
+        "Block shape score -> lot_avg={:.3f}, block_rsi={:.3f}, multiplier={:.3f}, final={:.3f}".format(
+            lot_avg_rsi,
+            block_rsi,
+            block_multiplier,
+            final_score,
+        )
     )
 
-    return max(0.0, min(1.0, final_score))
+    return _clamp_score(final_score)
 
 
-def _compute_shape_components(region: geo.Curve) -> Dict[str, float]:
+def get_rsi(region: geo.Curve | None) -> float:
+    """Return the RSI value (0~1) for a single region."""
+    if not region or not getattr(region, "IsClosed", False):
+        return 0.0
+
+    components = _build_shape_components(region)
+    rsi = _combine_components(components)
+
+    _log_debug(
+        "RSI components -> convexity={:.3f}, circularity={:.3f}, squareness={:.3f}, rsi={:.3f}".format(
+            components["convexity"],
+            components["circularity"],
+            components["squareness"],
+            rsi,
+        )
+    )
+
+    return rsi
+
+
+def _build_shape_components(region: geo.Curve) -> Dict[str, float]:
     return {
         "convexity": get_convexity_index(region),
         "circularity": get_circularity_index(region),
@@ -222,6 +202,13 @@ def get_squareness_index(region: geo.Curve) -> float:
     return max(0.0, min(1.0, squareness))
 
 
+def _compute_block_multiplier(block_rsi: float) -> float:
+    """Return the block-level adjustment multiplier."""
+    if block_rsi <= 0.0:
+        return 1.0 - SHAPE_BLOCK_INFLUENCE
+    return _clamp_score((block_rsi * SHAPE_BLOCK_INFLUENCE) + (1.0 - SHAPE_BLOCK_INFLUENCE))
+
+
 def _convex_hull_curve(region: geo.Curve) -> geo.Curve | None:
     """
     주어진 닫힌 커브의 평면(월드 XY 가정)에서 2D Convex Hull을 계산해 PolylineCurve로 반환.
@@ -312,7 +299,7 @@ def _combine_components(components: Dict[str, float]) -> float:
         return 0.0
 
     score = sum(value * weight for value, weight in weighted) / total_weight
-    return max(0.0, min(1.0, score))
+    return _clamp_score(score)
 
 
 def _get_polygon_vertex_count(region: geo.Curve) -> int:
@@ -344,6 +331,10 @@ def _unique_xy_points(points: List[geo.Point3d], precision: int = 6) -> List[geo
         seen.add(key)
         unique.append(pt)
     return unique
+
+
+def _clamp_score(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
+    return max(minimum, min(maximum, value))
 
 
 def _cross(o: geo.Point3d, a: geo.Point3d, b: geo.Point3d) -> float:

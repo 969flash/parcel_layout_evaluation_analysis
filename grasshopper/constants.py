@@ -21,3 +21,13 @@ MIN_BUILDING_WIDTH = 4.0
 
 # Area Thresholds (in square meters)
 LARGE_LOT_AREA = 660.0
+
+# Shape Scoring Weights
+SHAPE_COMPONENT_WEIGHTS = {
+	"convexity": 0.3,
+	"circularity": 0.3,
+	"squareness": 0.4,
+}
+
+# Proportion of the block-level RSI used as a multiplier for lot averages
+SHAPE_BLOCK_INFLUENCE = 0.2
