@@ -40,8 +40,9 @@ def compute(block: Block) -> float:
     # 3) 엣지 케이스 처리
     if not valid_lots:
         return 0.0
+    # 단일 필지인 경우는 1.0(완벽)으로 처리
     if len(valid_lots) == 1:
-        return 0.5
+        return 1.0
 
     # 4) 블록 고저차 계산 (절대값으로 안전 처리)
     block_relief = abs(float(block_max) - float(block_min))
@@ -57,15 +58,14 @@ def compute(block: Block) -> float:
         return 0.0
     avg_lot_relief = sum(lot_reliefs) / float(len(lot_reliefs))
 
-    # 6) 구획 품질 점수 계산
-    # 필지 평균 고저차가 블록 고저차보다 크면 0.0 (개선 없음)
+    # 6) 새 규칙: 필지 평균 고저차가 블록 고저차보다 크면 0.0
     if avg_lot_relief > block_relief:
         return 0.0
-    score = 1.0 - (avg_lot_relief / block_relief)
 
-    # 7) 0~1 범위로 클램핑 후 반환
-    if score < 0.0:
-        return 0.0
-    if score > 1.0:
-        return 1.0
+    # 7) 결과는 (1 - ratio) 없이도 0~1이 되도록, ratio = avg / block
+    # 최종 스코어는 1 - ratio (작을수록 좋으므로)
+    ratio = float(avg_lot_relief) / float(block_relief)
+    score = 1.0 - ratio
+
+    # 위 로직으로 score는 이미 0..1 범위여야 하므로 추가 클램핑은 하지 않음
     return float(score)
