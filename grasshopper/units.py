@@ -112,11 +112,15 @@ class Lot(Parcel):
         record: List[Any],
         hole_regions: Optional[List[geo.Curve]] = None,
         road_adj: Optional[int] = None,
+        max_height: Optional[float] = None,
+        min_height: Optional[float] = None,
     ):
         super().__init__(curve_crv, pnu, jimok, record, hole_regions)
         self.is_flag_lot: bool = False  # 자루형 토지 여부
         self.has_road_access: bool = False  # 도로 접근 여부
-        self.road_adj = road_adj
+        self.road_adj = road_adj  # 인접 도로 점수
+        self.max_height = max_height  # 대지 최대 고도
+        self.min_height = min_height  # 대지 최소 고도
 
 
 class Block:
@@ -127,8 +131,19 @@ class Block:
         # 막힌 도로를 포함한 블록 여부
         self.is_donut = False
         self._set_block_region()
-
         self.layout_score: LayoutScore = None  # 평가 점수 저장용
+        self.max_height = self.get_max_height()
+        self.min_height = self.get_min_height()
+
+    def get_max_height(self) -> Optional[float]:
+        """블록 내 대지들의 최대 고도를 반환합니다."""
+        heights = [lot.max_height for lot in self.lots if lot.max_height is not None]
+        return max(heights) if heights else None
+
+    def get_min_height(self) -> Optional[float]:
+        """블록 내 대지들의 최소 고도를 반환합니다."""
+        heights = [lot.min_height for lot in self.lots if lot.min_height is not None]
+        return min(heights) if heights else None
 
     def _set_block_region(self) -> None:
         """주어진 Lot들의 경계를 생성합니다."""
