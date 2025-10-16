@@ -100,7 +100,11 @@ class ShapefileManager:
                 return resolved
 
         # 존재하지 않는 경우: 진단을 위해 시도한 경로 정보를 포함한 예외를 발생시킨다.
-        search_msg = "\n".join(f"  - {p}" for p in tried) if tried else "  (no candidates resolved)"
+        search_msg = (
+            "\n".join(f"  - {p}" for p in tried)
+            if tried
+            else "  (no candidates resolved)"
+        )
         raise FileNotFoundError(
             "Unable to resolve shapefile path. Tried: \n" + search_msg
         )
@@ -117,7 +121,11 @@ class ShapefileManager:
         # 대소문자 다른 파일을 탐색
         try:
             for child in directory.iterdir():
-                if child.is_file() and child.stem == stem and child.suffix.lower() == suffix.lower():
+                if (
+                    child.is_file()
+                    and child.stem == stem
+                    and child.suffix.lower() == suffix.lower()
+                ):
                     return child
         except Exception:
             pass
@@ -153,9 +161,7 @@ class ShapefileManager:
 
         if missing:
             missing_paths = "\n".join(f"  - {p}" for p in missing)
-            raise FileNotFoundError(
-                "Missing shapefile component(s):\n" + missing_paths
-            )
+            raise FileNotFoundError("Missing shapefile component(s):\n" + missing_paths)
 
         # 필수 파일이 모두 존재하면 캐시 후 .shp 경로 반환
         self._last_bundle = resolved
@@ -216,7 +222,9 @@ class ShapefileManager:
 
             return resolved
 
-        print("[ShapefileManager] WARN: output directory candidates unsuitable; using default:")
+        print(
+            "[ShapefileManager] WARN: output directory candidates unsuitable; using default:"
+        )
         for entry, reason in tried:
             print(f"  - {entry} ({reason})")
 
@@ -305,11 +313,22 @@ class ShapefileManager:
         pnu = self._get_field_value(record, fields, "A1")
         jimok = self._get_field_value(record, fields, "A11")
         road_adj = self._get_field_value(record, fields, "A23")
+        min_height = self._get_field_value(record, fields, "min_height")
+        max_height = self._get_field_value(record, fields, "max_height")
 
         if jimok == "도로" or not jimok:
             parcel = Road(boundary_region, pnu, jimok, record, hole_regions)
         else:
-            parcel = Lot(boundary_region, pnu, jimok, record, hole_regions, road_adj)
+            parcel = Lot(
+                boundary_region,
+                pnu,
+                jimok,
+                record,
+                hole_regions,
+                road_adj,
+                max_height,
+                min_height,
+            )
 
         # 지오메트리 전처리 후 유효한 경우에만 반환
         return parcel  # if parcel.preprocess_curve() else None
