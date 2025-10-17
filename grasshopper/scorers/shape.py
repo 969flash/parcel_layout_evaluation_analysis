@@ -5,59 +5,95 @@ from typing import List
 import Rhino.Geometry as geo
 from units import Block
 import utils
+import os
+from constants import (
+    SHAPE_BLOCK_INFLUENCE,
+    SHAPE_CONVEXITY_WEIGHT,
+    SHAPE_CIRCULARITY_WEIGHT,
+    SHAPE_SQUARENESS_WEIGHT,
+)
+
+
+MIN_HULL_SAMPLE_POINTS = 200
+MAX_HULL_SAMPLE_STEP = 1.0
+MIN_HULL_SAMPLE_STEP = 1e-3
+
+
+def _is_debug_enabled() -> bool:
+    flag = os.getenv("DEBUG_SHAPE_SCORES", "")
+    return flag.lower() in {"1", "true", "yes", "on"}
+
+
+def _log_debug(message: str) -> None:
+    if _is_debug_enabled():
+        print(f"[SHAPE DEBUG] {message}")
 
 
 def compute(block: Block) -> float:
-    """
-    블록의 RSI(Revised Shape Index) 점수 계산.
+    """Return the shape score for a block.
 
-    RSI = (w1 × Score_convexity + w2 × Score_circularity)
-
-    - Score_convexity: 볼록성 점수 (0~1), 자루형/부정형 필지에 페널티
-    - Score_circularity: 원형성 점수 (0~1), 극단적으로 길쭉한 필지에 페널티
-    - w1, w2: 가중치 (각각 0.5)
-
-    블록 내 모든 필지의 RSI 점수 평균을 반환합니다.
+    1) 각 필지의 RSI 평균을 계산하고
+    2) 블록 외곽선의 RSI를 기반으로 'ugly multiplier'를 만들어
+    3) 두 값을 곱해 최종 점수를 산출합니다.
     """
     if not block.lots:
         return 0.0
 
-    # 가중치 설정 (균형 있게 시작)
-    w1 = 0.5  # 볼록성 가중치
-    w2 = 0.5  # 원형성 가중치
-
-    # 각 필지의 RSI 점수 계산
-    lot_rsi_scores = []
-    for lot in block.lots:
-        # Component 1: 볼록성 점수
-        score_convexity = get_convexity_index(lot.region)
-
-        # Component 2: 원형성 점수
-        score_circularity = get_circularity_index(lot.region)
-
-        # RSI 계산
-        rsi = w1 * score_convexity + w2 * score_circularity
-        lot_rsi_scores.append(rsi)
-
-    # 블록 내 필지들의 평균 RSI 점수 반환
-    return sum(lot_rsi_scores) / len(lot_rsi_scores)
-
-
-def get_sq_shape_index(region: geo.Curve) -> float:
-    """
-    정사각형 기준 형태지수(SI) 계산: P / (4 * sqrt(A))
-
-    - 정사각형: 1
-    - 원: ~0.886 (정사각형보다 작음)
-    - 길쭉/복잡: 1보다 큰 값으로 증가
-    """
-    area = float(utils.get_area(region))
-    perim = float(region.GetLength())
-
-    if area <= 0.0 or perim <= 0.0:
+    lot_scores = [get_rsi(getattr(lot, "region", None)) for lot in block.lots]
+    lot_scores = [score for score in lot_scores if score is not None]
+    if not lot_scores:
         return 0.0
 
-    return perim / (6.0 * math.sqrt(area))
+    lot_avg_rsi = sum(lot_scores) / len(lot_scores)
+
+    block_rsi = get_rsi(getattr(block, "region", None))
+    block_multiplier = _compute_block_multiplier(block_rsi)
+
+    final_score = lot_avg_rsi * block_multiplier
+
+    _log_debug(
+        "Block shape score -> lot_avg={:.3f}, block_rsi={:.3f}, multiplier={:.3f}, final={:.3f}".format(
+            lot_avg_rsi,
+            block_rsi,
+            block_multiplier,
+            final_score,
+        )
+    )
+
+    return final_score
+
+
+def get_rsi(region: geo.Curve | None) -> float:
+    """Return the RSI value (0~1) for a single region."""
+    if not region or not getattr(region, "IsClosed", False):
+        return 0.0
+
+    convexity = get_convexity_index(region)
+    circularity = get_circularity_index(region)
+    squareness = get_squareness_index(region)
+
+    rsi = (
+        (convexity * SHAPE_CONVEXITY_WEIGHT)
+        + (circularity * SHAPE_CIRCULARITY_WEIGHT)
+        + (squareness * SHAPE_SQUARENESS_WEIGHT)
+    )
+
+    _log_debug(
+        (
+            "RSI components -> convexity={:.3f}, circularity={:.3f}, squareness={:.3f}, "
+            "weights=({:.1f},{:.1f},{:.1f}), rsi={:.3f}"
+        ).format(
+            convexity,
+            circularity,
+            squareness,
+            SHAPE_CONVEXITY_WEIGHT,
+            SHAPE_CIRCULARITY_WEIGHT,
+            SHAPE_SQUARENESS_WEIGHT,
+            rsi,
+        )
+    )
+
+    return rsi
 
 
 def get_convexity_index(region: geo.Curve) -> float:
@@ -72,14 +108,18 @@ def get_convexity_index(region: geo.Curve) -> float:
     if not region or not getattr(region, "IsClosed", False):
         return 0.0
 
+    planar_region = _duplicate_on_world_xy(region)
+    if not planar_region or not getattr(planar_region, "IsClosed", False):
+        return 0.0
+
     try:
-        area = float(utils.get_area(region))
+        area = float(utils.get_area(planar_region))
     except Exception:
         return 0.0
     if area <= 0.0:
         return 0.0
 
-    hull_crv = _convex_hull_curve(region)
+    hull_crv = _convex_hull_curve(planar_region)
     if not hull_crv:
         return 0.0
     try:
@@ -118,7 +158,51 @@ def get_circularity_index(region: geo.Curve) -> float:
     circularity = (4.0 * math.pi * area) / (perim * perim)
 
     # 이론적으로 1.0을 초과할 수 없지만, 부동소수점 오차로 인해 약간 초과할 수 있음
-    return min(circularity, 1.0)
+    return circularity
+
+
+def get_squareness_index(region: geo.Curve) -> float:
+    """정사각형 기반 정방향성 지표를 반환."""
+    if not region or not getattr(region, "IsClosed", False):
+        return 0.0
+
+    try:
+        bbox = region.GetBoundingBox(True)
+    except Exception:
+        return 0.0
+
+    if not bbox or not bbox.IsValid:
+        return 0.0
+
+    width = max(bbox.Max.X - bbox.Min.X, 0.0)
+    height = max(bbox.Max.Y - bbox.Min.Y, 0.0)
+
+    if width <= 0.0 or height <= 0.0:
+        return 0.0
+
+    aspect_ratio = min(width, height) / max(width, height)
+
+    vertex_count = _get_polygon_vertex_count(region)
+    vertex_penalty = 1.0
+    if vertex_count == 3:
+        vertex_penalty = 0.5
+    elif vertex_count == 4:
+        vertex_penalty = 1.0
+    elif vertex_count == 5:
+        vertex_penalty = 0.9
+    elif vertex_count == 6:
+        vertex_penalty = 0.8
+    elif vertex_count > 6:
+        vertex_penalty = 0.7
+
+    return aspect_ratio * vertex_penalty
+
+
+def _compute_block_multiplier(block_rsi: float) -> float:
+    """Return the block-level adjustment multiplier."""
+    if block_rsi <= 0.0:
+        return 1.0 - SHAPE_BLOCK_INFLUENCE
+    return (block_rsi * SHAPE_BLOCK_INFLUENCE) + (1.0 - SHAPE_BLOCK_INFLUENCE)
 
 
 def _convex_hull_curve(region: geo.Curve) -> geo.Curve | None:
@@ -126,17 +210,8 @@ def _convex_hull_curve(region: geo.Curve) -> geo.Curve | None:
     주어진 닫힌 커브의 평면(월드 XY 가정)에서 2D Convex Hull을 계산해 PolylineCurve로 반환.
     샘플 포인트는 커브 분해 정점 + 균등 분할점 사용.
     """
-    # 포인트 수집
-    pts: List[geo.Point3d] = []
-    try:
-        # 세그먼트 정점
-        verts = utils.get_vertices(region)
-        pts.extend(verts)
-        # 균등 분할점 (대략 100분할)
-        perim = max(region.GetLength(), 1e-6)
-        step = max(perim / 100.0, 1e-3)
-        pts.extend(utils.get_pts_by_length(region, step, include_start=True))
-    except Exception:
+    pts = _collect_hull_samples(region)
+    if not pts:
         return None
 
     # 중복 제거 및 2D 투영 (XY 평면)
@@ -163,6 +238,101 @@ def _convex_hull_curve(region: geo.Curve) -> geo.Curve | None:
     if not pl.IsValid or not pl.IsClosed:
         return None
     return geo.PolylineCurve(pl)
+
+
+def _collect_hull_samples(region: geo.Curve) -> List[geo.Point3d]:
+    """convex hull 계산을 위한 샘플 포인트 목록 수집."""
+    pts: List[geo.Point3d] = []
+
+    try:
+        success, polyline = region.TryGetPolyline()
+        if success and polyline and len(polyline) > 0:
+            pts.extend(polyline)
+    except Exception:
+        pass
+
+    try:
+        verts = utils.get_vertices(region)
+        pts.extend(verts)
+    except Exception:
+        pass
+
+    try:
+        segments = region.DuplicateSegments()
+        for seg in segments or []:
+            pts.extend(utils.get_vertices(seg))
+    except Exception:
+        pass
+
+    try:
+        perim = max(region.GetLength(), 1e-6)
+        step = max(
+            min(perim / float(MIN_HULL_SAMPLE_POINTS), MAX_HULL_SAMPLE_STEP),
+            MIN_HULL_SAMPLE_STEP,
+        )
+        dense_pts = utils.get_pts_by_length(region, step, include_start=True)
+        pts.extend(dense_pts)
+    except Exception:
+        pass
+
+    return pts
+
+
+def _get_polygon_vertex_count(region: geo.Curve) -> int:
+    """정방향성 계산을 위한 꼭지점 개수 계산"""
+    try:
+        success, polyline = region.TryGetPolyline()
+        if success and polyline:
+            return len(_unique_xy_points(list(polyline)))
+    except Exception:
+        pass
+
+    try:
+        verts = utils.get_vertices(region)
+    except Exception:
+        return 0
+
+    if not verts:
+        return 0
+
+    return len(_unique_xy_points(verts))
+
+
+def _unique_xy_points(points: List[geo.Point3d], precision: int = 6) -> List[geo.Point3d]:
+    """부동소수점 오차를 고려해 XY 평면상에서 중복 제거된 점 목록 반환."""
+    unique: List[geo.Point3d] = []
+    seen = set()
+    for pt in points:
+        key = (round(pt.X, precision), round(pt.Y, precision))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(pt)
+    return unique
+
+
+def _duplicate_on_world_xy(region: geo.Curve) -> geo.Curve | None:
+    """커브를 WorldXY 평면으로 복제/평탄화해 돌려줌."""
+    if not region or not getattr(region, "IsValid", False):
+        return None
+
+    try:
+        duplicate = region.DuplicateCurve()
+    except Exception:
+        return None
+
+    try:
+        success, plane = region.TryGetPlane()
+    except Exception:
+        success = False
+        plane = None
+
+    if success and plane:
+        transform = geo.Transform.PlaneToPlane(plane, geo.Plane.WorldXY)
+        if duplicate and not duplicate.Transform(transform):
+            return None
+
+    return duplicate
 
 
 def _cross(o: geo.Point3d, a: geo.Point3d, b: geo.Point3d) -> float:
