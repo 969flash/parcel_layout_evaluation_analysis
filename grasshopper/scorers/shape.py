@@ -6,17 +6,17 @@ import Rhino.Geometry as geo
 from units import Block
 import utils
 import os
+
+try:
+    import ghpythonlib.components as ghcomp  # type: ignore
+except ImportError as exc:  # pragma: no cover - GH environment dependency
+    raise ImportError("ghpythonlib.components is required for shape scoring") from exc
 from constants import (
     SHAPE_BLOCK_INFLUENCE,
     SHAPE_CONVEXITY_WEIGHT,
     SHAPE_CIRCULARITY_WEIGHT,
     SHAPE_SQUARENESS_WEIGHT,
 )
-
-
-MIN_HULL_SAMPLE_POINTS = 200
-MAX_HULL_SAMPLE_STEP = 1.0
-MIN_HULL_SAMPLE_STEP = 1e-3
 
 
 def _is_debug_enabled() -> bool:
@@ -39,14 +39,13 @@ def compute(block: Block) -> float:
     if not block.lots:
         return 0.0
 
-    lot_scores = [get_rsi(getattr(lot, "region", None)) for lot in block.lots]
-    lot_scores = [score for score in lot_scores if score is not None]
+    lot_scores = [get_rsi(lot.region) for lot in block.lots]
     if not lot_scores:
         return 0.0
 
     lot_avg_rsi = sum(lot_scores) / len(lot_scores)
 
-    block_rsi = get_rsi(getattr(block, "region", None))
+    block_rsi = get_rsi(block.region)
     block_multiplier = _compute_block_multiplier(block_rsi)
 
     final_score = lot_avg_rsi * block_multiplier
@@ -65,8 +64,10 @@ def compute(block: Block) -> float:
 
 def get_rsi(region: geo.Curve | None) -> float:
     """Return the RSI value (0~1) for a single region."""
-    if not region or not getattr(region, "IsClosed", False):
-        return 0.0
+    if region is None:
+        raise ValueError("Region curve is required to compute RSI.")
+    if not getattr(region, "IsClosed", False):
+        raise ValueError("Region curve must be closed to compute RSI.")
 
     convexity = get_convexity_index(region)
     circularity = get_circularity_index(region)
@@ -105,21 +106,19 @@ def get_convexity_index(region: geo.Curve) -> float:
     - 결과값은 (0, 1] 범위. 1에 가까울수록 더 볼록함.
     - 자루형, ㄷ자형, 별 모양 등 움푹 파인 필지에 페널티 부여
     """
-    if not region or not getattr(region, "IsClosed", False):
-        return 0.0
-
-    planar_region = _duplicate_on_world_xy(region)
-    if not planar_region or not getattr(planar_region, "IsClosed", False):
-        return 0.0
+    if region is None:
+        raise ValueError("Region curve is required to compute convexity.")
+    if not getattr(region, "IsClosed", False):
+        raise ValueError("Region curve must be closed to compute convexity.")
 
     try:
-        area = float(utils.get_area(planar_region))
+        area = float(utils.get_area(region))
     except Exception:
         return 0.0
     if area <= 0.0:
         return 0.0
 
-    hull_crv = _convex_hull_curve(planar_region)
+    hull_crv = _convex_hull_curve(region)
     if not hull_crv:
         return 0.0
     try:
@@ -142,8 +141,10 @@ def get_circularity_index(region: geo.Curve) -> float:
     - 길고 얇은 직사각형: 0에 가까운 값
     - 극단적으로 길쭉한 필지에 페널티 부여
     """
-    if not region or not getattr(region, "IsClosed", False):
-        return 0.0
+    if region is None:
+        raise ValueError("Region curve is required to compute circularity.")
+    if not getattr(region, "IsClosed", False):
+        raise ValueError("Region curve must be closed to compute circularity.")
 
     try:
         area = float(utils.get_area(region))
@@ -163,19 +164,32 @@ def get_circularity_index(region: geo.Curve) -> float:
 
 def get_squareness_index(region: geo.Curve) -> float:
     """정사각형 기반 정방향성 지표를 반환."""
-    if not region or not getattr(region, "IsClosed", False):
-        return 0.0
+    if region is None:
+        raise ValueError("Region curve is required to compute squareness.")
+    if not getattr(region, "IsClosed", False):
+        raise ValueError("Region curve must be closed to compute squareness.")
 
     try:
-        bbox = region.GetBoundingBox(True)
+        points = utils.get_vertices(region)
     except Exception:
         return 0.0
 
-    if not bbox or not bbox.IsValid:
+    if not points:
         return 0.0
 
-    width = max(bbox.Max.X - bbox.Min.X, 0.0)
-    height = max(bbox.Max.Y - bbox.Min.Y, 0.0)
+    try:
+        obb = geo.Box.FitBoundingBox(points)
+    except Exception:
+        obb = None
+
+    if not obb or not getattr(obb, "IsValid", False):
+        return 0.0
+
+    try:
+        width = max(float(obb.X.Length), 0.0)
+        height = max(float(obb.Y.Length), 0.0)
+    except Exception:
+        return 0.0
 
     if width <= 0.0 or height <= 0.0:
         return 0.0
@@ -206,76 +220,14 @@ def _compute_block_multiplier(block_rsi: float) -> float:
 
 
 def _convex_hull_curve(region: geo.Curve) -> geo.Curve | None:
-    """
-    주어진 닫힌 커브의 평면(월드 XY 가정)에서 2D Convex Hull을 계산해 PolylineCurve로 반환.
-    샘플 포인트는 커브 분해 정점 + 균등 분할점 사용.
-    """
-    pts = _collect_hull_samples(region)
-    if not pts:
-        return None
-
-    # 중복 제거 및 2D 투영 (XY 평면)
-    unique = []
-    seen = set()
-    for p in pts:
-        key = (round(p.X, 6), round(p.Y, 6))
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(geo.Point3d(p.X, p.Y, 0.0))
-
-    if len(unique) < 3:
-        return None
-
-    hull_pts = _monotone_chain(unique)
-    if len(hull_pts) < 3:
-        return None
-
-    # 닫힌 폴리라인 커브 생성
-    if hull_pts[0] != hull_pts[-1]:
-        hull_pts.append(hull_pts[0])
-    pl = geo.Polyline(hull_pts)
-    if not pl.IsValid or not pl.IsClosed:
-        return None
-    return geo.PolylineCurve(pl)
-
-
-def _collect_hull_samples(region: geo.Curve) -> List[geo.Point3d]:
-    """convex hull 계산을 위한 샘플 포인트 목록 수집."""
-    pts: List[geo.Point3d] = []
-
-    try:
-        success, polyline = region.TryGetPolyline()
-        if success and polyline and len(polyline) > 0:
-            pts.extend(polyline)
-    except Exception:
-        pass
-
-    try:
-        verts = utils.get_vertices(region)
-        pts.extend(verts)
-    except Exception:
-        pass
-
-    try:
-        segments = region.DuplicateSegments()
-        for seg in segments or []:
-            pts.extend(utils.get_vertices(seg))
-    except Exception:
-        pass
-
-    try:
-        perim = max(region.GetLength(), 1e-6)
-        step = max(
-            min(perim / float(MIN_HULL_SAMPLE_POINTS), MAX_HULL_SAMPLE_STEP),
-            MIN_HULL_SAMPLE_STEP,
-        )
-        dense_pts = utils.get_pts_by_length(region, step, include_start=True)
-        pts.extend(dense_pts)
-    except Exception:
-        pass
-
-    return pts
+    """주어진 폐곡선의 convex hull 커브를 반환."""
+    hull_curve, hull_curve_world, _ = ghcomp.ConvexHull(utils.get_vertices(region))
+    candidate = hull_curve_world or hull_curve
+    if isinstance(candidate, geo.Polyline):
+        candidate = geo.PolylineCurve(candidate)
+    if candidate and candidate.IsClosed:
+        return candidate
+    return None
 
 
 def _get_polygon_vertex_count(region: geo.Curve) -> int:
@@ -310,55 +262,3 @@ def _unique_xy_points(points: List[geo.Point3d], precision: int = 6) -> List[geo
         unique.append(pt)
     return unique
 
-
-def _duplicate_on_world_xy(region: geo.Curve) -> geo.Curve | None:
-    """커브를 WorldXY 평면으로 복제/평탄화해 돌려줌."""
-    if not region or not getattr(region, "IsValid", False):
-        return None
-
-    try:
-        duplicate = region.DuplicateCurve()
-    except Exception:
-        return None
-
-    try:
-        success, plane = region.TryGetPlane()
-    except Exception:
-        success = False
-        plane = None
-
-    if success and plane:
-        transform = geo.Transform.PlaneToPlane(plane, geo.Plane.WorldXY)
-        if duplicate and not duplicate.Transform(transform):
-            return None
-
-    return duplicate
-
-
-def _cross(o: geo.Point3d, a: geo.Point3d, b: geo.Point3d) -> float:
-    return (a.X - o.X) * (b.Y - o.Y) - (a.Y - o.Y) * (b.X - o.X)
-
-
-def _monotone_chain(points: List[geo.Point3d]) -> List[geo.Point3d]:
-    """
-    Andrew's monotone chain algorithm for 2D convex hull.
-    입력은 XY 평면상의 점들.
-    """
-    pts = sorted(points, key=lambda p: (p.X, p.Y))
-    if len(pts) <= 1:
-        return pts[:]
-
-    lower: List[geo.Point3d] = []
-    for p in pts:
-        while len(lower) >= 2 and _cross(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
-        lower.append(p)
-
-    upper: List[geo.Point3d] = []
-    for p in reversed(pts):
-        while len(upper) >= 2 and _cross(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
-
-    hull = lower[:-1] + upper[:-1]
-    return hull
