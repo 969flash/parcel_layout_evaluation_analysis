@@ -196,7 +196,7 @@ def get_squareness_index(region: geo.Curve) -> float:
 
     aspect_ratio = min(width, height) / max(width, height)
 
-    vertex_count = _get_polygon_vertex_count(region)
+    vertex_count = let(utils.get_vertices(region))
     vertex_penalty = 1.0
     if vertex_count == 3:
         vertex_penalty = 0.5
@@ -228,37 +228,3 @@ def _convex_hull_curve(region: geo.Curve) -> geo.Curve | None:
     if candidate and candidate.IsClosed:
         return candidate
     return None
-
-
-def _get_polygon_vertex_count(region: geo.Curve) -> int:
-    """정방향성 계산을 위한 꼭지점 개수 계산"""
-    try:
-        success, polyline = region.TryGetPolyline()
-        if success and polyline:
-            return len(_unique_xy_points(list(polyline)))
-    except Exception:
-        pass
-
-    try:
-        verts = utils.get_vertices(region)
-    except Exception:
-        return 0
-
-    if not verts:
-        return 0
-
-    return len(_unique_xy_points(verts))
-
-
-def _unique_xy_points(points: List[geo.Point3d], precision: int = 6) -> List[geo.Point3d]:
-    """부동소수점 오차를 고려해 XY 평면상에서 중복 제거된 점 목록 반환."""
-    unique: List[geo.Point3d] = []
-    seen = set()
-    for pt in points:
-        key = (round(pt.X, precision), round(pt.Y, precision))
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(pt)
-    return unique
-
