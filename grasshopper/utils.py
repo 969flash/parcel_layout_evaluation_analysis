@@ -119,6 +119,14 @@ def get_area(regions: Union[List[geo.Curve], geo.Curve]) -> float:
     return round(area, ROUNDING_PRECISION)
 
 
+def get_length(curve: geo.Curve) -> float:
+    """커브의 길이를 계산합니다."""
+    if not curve:
+        return 0.0
+    length = curve.GetLength()
+    return round(length, ROUNDING_PRECISION)
+
+
 # ==============================================================================
 # 2. 고급 지오메트리 연산 (Advanced Geometry Operations)
 # ==============================================================================
@@ -202,6 +210,34 @@ def get_overlapped_length(curve_a: geo.Curve, curve_b: geo.Curve) -> float:
     if not overlapped_curves:
         return 0.0
     return sum(crv.GetLength() for crv in overlapped_curves)
+
+
+def get_min_bbox(region: geo.Curve) -> geo.BoundingBox:
+    """컨벡스헐 알고리즘을 활용해 영역 커브의 최소 외접사각형을 구한다."""
+
+    # 1. 컨벡스헐 연산
+    pts = get_vertices(region)
+    hull_pts = ghcomp.ConvexHull(pts, geo.Plane.WorldXY).indices
+    if not hull_pts:
+        raise ValueError("컨벡스 헐 계산 실패")
+
+    # 2. 컨벡스헐 결과물 세그먼트기준으로 바운딩박스 생성
+    bbox_list = []
+    for i in range(len(hull_pts)):
+        pt_a = pts[hull_pts[i]]
+        pt_b = pts[hull_pts[(i + 1) % len(hull_pts)]]
+        # get_plane form pt_a to pt_b
+        line = geo.Line(pt_a, pt_b)
+        dir_vector = line.Direction
+        normal_vector = geo.Vector3d.CrossProduct(dir_vector, geo.Vector3d.ZAxis)
+        plane = geo.Plane(pt_a, dir_vector, normal_vector)
+        bbox = region.GetBoundingBox(plane)
+        bbox_list.append(bbox)
+
+    # 3. 최소 면적 바운딩박스 선택
+    min_bbox = min(bbox_list, key=lambda b: b.Area)
+
+    return min_bbox
 
 
 class Offset:

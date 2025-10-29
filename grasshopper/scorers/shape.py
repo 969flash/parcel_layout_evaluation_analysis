@@ -3,30 +3,17 @@ from __future__ import annotations
 import math
 from typing import List
 import Rhino.Geometry as geo
+import ghpythonlib.components as ghcomp  # type: ignore
 from units import Block
 import utils
 import os
 
-try:
-    import ghpythonlib.components as ghcomp  # type: ignore
-except ImportError as exc:  # pragma: no cover - GH environment dependency
-    raise ImportError("ghpythonlib.components is required for shape scoring") from exc
 from constants import (
     SHAPE_BLOCK_INFLUENCE,
     SHAPE_CONVEXITY_WEIGHT,
     SHAPE_CIRCULARITY_WEIGHT,
     SHAPE_SQUARENESS_WEIGHT,
 )
-
-
-def _is_debug_enabled() -> bool:
-    flag = os.getenv("DEBUG_SHAPE_SCORES", "")
-    return flag.lower() in {"1", "true", "yes", "on"}
-
-
-def _log_debug(message: str) -> None:
-    if _is_debug_enabled():
-        print(f"[SHAPE DEBUG] {message}")
 
 
 def compute(block: Block) -> float:
@@ -50,25 +37,11 @@ def compute(block: Block) -> float:
 
     final_score = lot_avg_rsi * block_multiplier
 
-    _log_debug(
-        "Block shape score -> lot_avg={:.3f}, block_rsi={:.3f}, multiplier={:.3f}, final={:.3f}".format(
-            lot_avg_rsi,
-            block_rsi,
-            block_multiplier,
-            final_score,
-        )
-    )
-
     return final_score
 
 
 def get_rsi(region: geo.Curve | None) -> float:
     """Return the RSI value (0~1) for a single region."""
-    if region is None:
-        raise ValueError("Region curve is required to compute RSI.")
-    if not getattr(region, "IsClosed", False):
-        raise ValueError("Region curve must be closed to compute RSI.")
-
     convexity = get_convexity_index(region)
     circularity = get_circularity_index(region)
     squareness = get_squareness_index(region)
@@ -77,21 +50,6 @@ def get_rsi(region: geo.Curve | None) -> float:
         (convexity * SHAPE_CONVEXITY_WEIGHT)
         + (circularity * SHAPE_CIRCULARITY_WEIGHT)
         + (squareness * SHAPE_SQUARENESS_WEIGHT)
-    )
-
-    _log_debug(
-        (
-            "RSI components -> convexity={:.3f}, circularity={:.3f}, squareness={:.3f}, "
-            "weights=({:.1f},{:.1f},{:.1f}), rsi={:.3f}"
-        ).format(
-            convexity,
-            circularity,
-            squareness,
-            SHAPE_CONVEXITY_WEIGHT,
-            SHAPE_CIRCULARITY_WEIGHT,
-            SHAPE_SQUARENESS_WEIGHT,
-            rsi,
-        )
     )
 
     return rsi
@@ -118,7 +76,9 @@ def get_convexity_index(region: geo.Curve) -> float:
     if area <= 0.0:
         return 0.0
 
-    hull_crv = _convex_hull_curve(region)
+    vertices = utils.get_vertices(region)
+    hull_crv = ghcomp.ConvexHull(vertices).hull
+
     if not hull_crv:
         return 0.0
     try:
@@ -147,12 +107,9 @@ def get_circularity_index(region: geo.Curve) -> float:
         raise ValueError("Region curve must be closed to compute circularity.")
 
     try:
-        area = float(utils.get_area(region))
-        perim = float(region.GetLength())
+        area = utils.get_area(region)
+        perim = utils.get_length(region)
     except Exception:
-        return 0.0
-
-    if area <= 0.0 or perim <= 0.0:
         return 0.0
 
     # Isoperimetric Quotient 공식
@@ -164,39 +121,17 @@ def get_circularity_index(region: geo.Curve) -> float:
 
 def get_squareness_index(region: geo.Curve) -> float:
     """정사각형 기반 정방향성 지표를 반환."""
-    if region is None:
-        raise ValueError("Region curve is required to compute squareness.")
-    if not getattr(region, "IsClosed", False):
-        raise ValueError("Region curve must be closed to compute squareness.")
+    bbox = utils.get_min_bbox(region)
 
-    try:
-        points = utils.get_vertices(region)
-    except Exception:
-        return 0.0
-
-    if not points:
-        return 0.0
-
-    try:
-        obb = geo.Box.FitBoundingBox(points)
-    except Exception:
-        obb = None
-
-    if not obb or not getattr(obb, "IsValid", False):
-        return 0.0
-
-    try:
-        width = max(float(obb.X.Length), 0.0)
-        height = max(float(obb.Y.Length), 0.0)
-    except Exception:
-        return 0.0
+    width = max(bbox.X.Length, 0.0)
+    height = max(bbox.Y.Length, 0.0)
 
     if width <= 0.0 or height <= 0.0:
         return 0.0
 
     aspect_ratio = min(width, height) / max(width, height)
 
-    vertex_count = let(utils.get_vertices(region))
+    vertex_count = len(utils.get_vertices(region))
     vertex_penalty = 1.0
     if vertex_count == 3:
         vertex_penalty = 0.5
@@ -217,14 +152,3 @@ def _compute_block_multiplier(block_rsi: float) -> float:
     if block_rsi <= 0.0:
         return 1.0 - SHAPE_BLOCK_INFLUENCE
     return (block_rsi * SHAPE_BLOCK_INFLUENCE) + (1.0 - SHAPE_BLOCK_INFLUENCE)
-
-
-def _convex_hull_curve(region: geo.Curve) -> geo.Curve | None:
-    """주어진 폐곡선의 convex hull 커브를 반환."""
-    hull_curve, hull_curve_world, _ = ghcomp.ConvexHull(utils.get_vertices(region))
-    candidate = hull_curve_world or hull_curve
-    if isinstance(candidate, geo.Polyline):
-        candidate = geo.PolylineCurve(candidate)
-    if candidate and candidate.IsClosed:
-        return candidate
-    return None
