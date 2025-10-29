@@ -342,23 +342,72 @@ class ShapefileManager:
             self._resolve_shapefile_path(file_path)
         )
 
-        # 상세 디버그: 인코딩 순차 시도 + 내부 상태 점검
-        enc_attempts = ["utf-8", "cp949", None]
+        # 상세 디버그: 인코딩 순차 시도 + 내부 상태 점검 (레코드 디코딩까지 확인)
+        # .cpg를 최우선 후보로 사용
+        preferred_cpg = None
+        try:
+            cpg_path = shp_path.with_suffix(".cpg")
+            if cpg_path.exists():
+                preferred_cpg = (
+                    cpg_path.read_text(encoding="utf-8", errors="ignore").strip()
+                    or None
+                )
+        except Exception:
+            preferred_cpg = None
+
+        base_attempts = [
+            "cp949",
+            "euc-kr",
+            "utf-8",
+            "utf-8-sig",
+            "cp1252",
+            "latin1",
+            None,
+        ]
+        enc_attempts = []
+        if preferred_cpg:
+            enc_attempts.append(preferred_cpg)
+        for _enc in base_attempts:
+            if _enc != preferred_cpg:
+                enc_attempts.append(_enc)
+
         last_errors = []
         sf = None
+        records_selected = None
         for enc in enc_attempts:
             try:
                 path_for_reader = str(shp_path)
-                if enc:
-                    sf = shapefile.Reader(path_for_reader, encoding=enc)
-                else:
-                    sf = shapefile.Reader(path_for_reader)
-                print(
-                    f"[ShapefileManager] opened OK with encoding={enc} path={path_for_reader}"
+                # Reader 생성
+                sf_try = (
+                    shapefile.Reader(path_for_reader, encoding=enc)
+                    if enc
+                    else shapefile.Reader(path_for_reader)
                 )
-                # 인코딩 기록: 명시적 인코딩을 사용했다면 저장
+                # 전체 records() 디코딩 시도 (pyshp는 전부 읽음)
+                try:
+                    records_selected = sf_try.records()
+                except UnicodeDecodeError as ue:
+                    last_errors.append((enc, f"UnicodeDecodeError on records(): {ue}"))
+                    try:
+                        sf_try.close()
+                    except Exception:
+                        pass
+                    continue  # 다음 인코딩 시도
+                except Exception as e:
+                    last_errors.append((enc, repr(e)))
+                    try:
+                        sf_try.close()
+                    except Exception:
+                        pass
+                    continue
+
+                # 여기까지 왔다면 해당 인코딩으로 레코드 디코딩 성공
+                sf = sf_try
+                print(
+                    f"[ShapefileManager] opened OK (validated records) encoding={enc} path={path_for_reader}"
+                )
                 if enc:
-                    self._encoding = enc
+                    self._encoding = enc  # 명시 인코딩 기록
                 break
             except Exception as e:
                 last_errors.append((enc, repr(e)))
@@ -382,7 +431,13 @@ class ShapefileManager:
         except Exception as e:
             raise RuntimeError(f"Failed to read shapes(): {e}")
         try:
-            records = sf.records()
+            # 선택된 인코딩으로 이미 records를 디코딩했으면 재사용
+            records = records_selected if records_selected is not None else sf.records()
+        except UnicodeDecodeError as e:
+            # 이 지점까지 왔다면 매우 드물지만 재시도 불가 → 상세 정보 포함
+            raise RuntimeError(
+                f"Failed to read records() due to decoding error after validation: {e}.\nTried encodings: {enc_attempts}\nErrors: {last_errors}"
+            )
         except Exception as e:
             raise RuntimeError(f"Failed to read records(): {e}")
         try:
