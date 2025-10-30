@@ -39,6 +39,10 @@ def compute(block: Block) -> float:
         block.region, small_setback_regions, large_setback_regions
     )
 
+    # 안전장치: 블록의 건축 가능 면적이 너무 작으면 0.0 반환
+    if buildable_block_area < constants.AREA_TOL:
+        return 0.0
+
     score = buildable_lot_area / buildable_block_area
 
     return score

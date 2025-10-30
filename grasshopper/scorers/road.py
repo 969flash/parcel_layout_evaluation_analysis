@@ -47,11 +47,15 @@ def compute(block: Block) -> float:
     # 블록의 최대 잠재력 점수를 '내부 필지 중 최고점'으로 추정 (분모)
     inferred_block_max_score = max(internal_lot_scores) if internal_lot_scores else 0.0
 
+    # 맹지인 블록은 1.0로 처리
+    if inferred_block_max_score == 0:
+        return 1.0
+
     # 블록 내 필지들의 실제 평균 점수 계산 (분자)
     average_internal_score = sum(internal_lot_scores) / len(internal_lot_scores)
-    if inferred_block_max_score <= 0:
+    if inferred_block_max_score < 0:
         raise Exception(
-            "Inferred block max score is zero or negative, cannot compute efficiency index."
+            "Inferred block max score is negative, cannot compute efficiency index."
         )
     # 구획 접도 효율성 지수 계산
     access_efficiency_index = average_internal_score / inferred_block_max_score

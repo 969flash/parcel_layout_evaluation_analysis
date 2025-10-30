@@ -316,7 +316,7 @@ class ShapefileManager:
         min_height = self._get_field_value(record, fields, "min_height")
         max_height = self._get_field_value(record, fields, "max_height")
 
-        if jimok == "도로" or not jimok:
+        if jimok == "도로" or jimok == "구거" or not jimok:
             parcel = Road(boundary_region, pnu, jimok, record, hole_regions)
         else:
             parcel = Lot(

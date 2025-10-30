@@ -123,13 +123,11 @@ def get_squareness_index(region: geo.Curve) -> float:
     """정사각형 기반 정방향성 지표를 반환."""
     bbox = utils.get_min_bbox(region)
 
-    width = max(bbox.X.Length, 0.0)
-    height = max(bbox.Y.Length, 0.0)
+    corners = list(bbox.GetCorners())[:4]
+    dist_1 = corners[0].DistanceTo(corners[1])
+    dist_2 = corners[1].DistanceTo(corners[2])
 
-    if width <= 0.0 or height <= 0.0:
-        return 0.0
-
-    aspect_ratio = min(width, height) / max(width, height)
+    aspect_ratio = min(dist_1, dist_2) / max(dist_1, dist_2)
 
     vertex_count = len(utils.get_vertices(region))
     vertex_penalty = 1.0
