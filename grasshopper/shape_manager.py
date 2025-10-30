@@ -311,24 +311,26 @@ class ShapefileManager:
             return None
 
         pnu = self._get_field_value(record, fields, "A1")
-        jimok = self._get_field_value(record, fields, "A11")
+        # 지목(jimok) 값 정규화: 비어있거나 특정 값(도로/구거)은 즉시 스킵
+        jimok_raw = self._get_field_value(record, fields, "A11", "")
+        jimok = str(jimok_raw).strip() if jimok_raw is not None else ""
+        if jimok in {"도로", "구거", ""}:
+            return None
+
         road_adj = self._get_field_value(record, fields, "A23")
         min_height = self._get_field_value(record, fields, "min_height")
         max_height = self._get_field_value(record, fields, "max_height")
 
-        if jimok == "도로" or jimok == "구거" or not jimok:
-            parcel = Road(boundary_region, pnu, jimok, record, hole_regions)
-        else:
-            parcel = Lot(
-                boundary_region,
-                pnu,
-                jimok,
-                record,
-                hole_regions,
-                road_adj,
-                max_height,
-                min_height,
-            )
+        parcel = Lot(
+            boundary_region,
+            pnu,
+            jimok,
+            record,
+            hole_regions,
+            road_adj,
+            max_height,
+            min_height,
+        )
 
         # 지오메트리 전처리 후 유효한 경우에만 반환
         return parcel  # if parcel.preprocess_curve() else None
