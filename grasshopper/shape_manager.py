@@ -335,7 +335,9 @@ class ShapefileManager:
         # 지오메트리 전처리 후 유효한 경우에만 반환
         return parcel  # if parcel.preprocess_curve() else None
 
-    def get_parcels_from_shapes(self, file_path: str) -> List[Parcel]:
+    def get_parcels_from_shapes(
+        self, file_path: str, a2_prefix: Optional[Any] = None
+    ) -> List[Parcel]:
         """
         모든 Shape로부터 Parcel 객체 리스트를 생성합니다.
         파일 경로는 이 메서드 호출 시 인자로 전달합니다.
@@ -470,11 +472,38 @@ class ShapefileManager:
         except Exception:
             pass
 
+        # 지역 필터 전처리: A2가 지정된 접두사(들)로 시작하는 레코드만 처리
+        prefixes: Optional[List[str]] = None
+        if a2_prefix is not None:
+            if isinstance(a2_prefix, (list, tuple, set)):
+                prefixes = [str(p).strip() for p in a2_prefix if str(p).strip()]
+            else:
+                s = str(a2_prefix).strip()
+                prefixes = [s] if s else None
+
+        total = 0
+        kept = 0
+
         parcels: List[Parcel] = []
         for shape, record in zip(shapes, records):
+            total += 1
+            if prefixes:
+                a2_val = self._get_field_value(record, fields, "A2", "")
+                a2_str = str(a2_val).strip()
+                # 접두사 중 하나라도 매칭되어야 통과
+                if not any(a2_str.startswith(pref) for pref in prefixes):
+                    continue
+            kept += 1
             parcel = self._create_parcel_from_shape(shape, record, fields)
             if parcel:
                 parcels.append(parcel)
+        if prefixes:
+            try:
+                print(
+                    f"[ShapefileManager] A2 prefix filter kept {kept}/{total} records (prefixes={prefixes})"
+                )
+            except Exception:
+                pass
         return parcels
 
     # ==============================================================

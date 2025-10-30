@@ -20,7 +20,10 @@ if __name__ == "__main__":
     abs_shp = globals().get("shapefile_path", None)
     save_path = globals().get("save_path", None)
     shapefile_manager = ShapefileManager()
-    parcels = shapefile_manager.get_parcels_from_shapes(str(abs_shp))
+
+    # 구 별 필터링
+    prefix = globals().get("prefix", None)
+    parcels = shapefile_manager.get_parcels_from_shapes(str(abs_shp), prefix)
 
     block_generator = BlockGenerator()
     print(f"Loaded {len(parcels)} parcels.")
