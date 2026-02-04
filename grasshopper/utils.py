@@ -360,7 +360,13 @@ def simplify_regions_with_offset(
 
     outer = offset_regions_outward(inner, dist * 0.5, miter)
 
-    return outer
+    # NOTE:
+    # in -> out 단순화는 수치오차/미터 처리에 따라 원본 영역(regions) 밖으로
+    # 미세하게 확장되는 케이스가 발생할 수 있습니다.
+    # 후속 계산(특히 면적 합산)에서 score > 1 같은 버그로 이어질 수 있으므로
+    # 반드시 원본 영역과의 교집합으로 클램프합니다.
+    clamped = get_intersection_regions(outer, regions)
+    return clamped
 
 
 # ==============================================================================
