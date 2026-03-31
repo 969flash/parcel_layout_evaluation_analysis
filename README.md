@@ -199,4 +199,4 @@ If you find this work useful, please consider citing:
 
 ## Acknowledgments
 
-This research was conducted at the **[LAUS (Lab. Architectural & Urban Space)](https://architecture.snu.ac.kr/research/lab-architectural-urban-space/)**, Department of Architecture and Architectural Engineering, **Seoul National University**, under the supervision of Prof. Bumjun Kang.
+This research was conducted at the **[LAUS (Lab. Architectural & Urban Space)](https://laus.snu.ac.kr/)**, Department of Architecture and Architectural Engineering, **Seoul National University**, under the supervision of Prof. Bumjun Kang.
